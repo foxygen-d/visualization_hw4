@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Покупки в Груше</title>
+  <meta name="description" content="Интерактивный дашборд заказов клиента сервиса доставки продуктов на d3.js и Vue.js: заказы, траты, скидки и любимые товары по месяцам и категориям.">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <!-- Vue-приложение: шаблон прямо в HTML, логика — в js/app.js -->
+  <div id="app" class="page" v-cloak>
+
+    <header class="top">
+      <div class="brand">
+        <svg class="brand__logo" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M16 6c-1-2-1-3.5 0-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M17 5c2-1.6 4.5-1.8 6.5-.6-1.4 1.9-3.8 2.6-6.5.6z" fill="var(--accent)"/>
+          <path d="M16 6c-3 0-4.6 2.6-4.6 5.4 0 1.7-.9 2.6-2.2 4.2C7.7 17.4 7 19.3 7 21.3 7 26.2 11 30 16 30s9-3.8 9-8.7c0-2-.7-3.9-2.2-5.7-1.3-1.6-2.2-2.5-2.2-4.2C20.6 8.6 19 6 16 6z" fill="currentColor"/>
+        </svg>
+        <div>
+          <h1>Покупки в&nbsp;Груше</h1>
+          <p class="sub">{{ periodLabel }}</p>
+        </div>
+      </div>
+      <button class="theme-btn" type="button" @click="toggleTheme" aria-label="Переключить тему">
+        <span class="theme-btn__icon" aria-hidden="true"></span>
+        <span>{{ theme === 'dark' ? 'Светлая тема' : 'Тёмная тема' }}</span>
+      </button>
+    </header>
+
+    <div v-if="error" class="error">
+      <b>Не удалось загрузить данные.</b><br>
+      Браузер не даёт читать CSV при открытии файла напрямую (file://). Откройте дашборд через GitHub Pages
+      или локальный сервер: <code>python -m http.server</code> в папке проекта и затем <code>http://localhost:8000</code>.
+    </div>
+
+    <p v-else-if="loading" class="empty">Загрузка данных…</p>
+
+    <template v-else>
+      <!-- Фильтры -->
+      <section class="filters" aria-label="Фильтры">
+        <div class="filter">
+          <span class="filter__label">Период</span>
+          <div class="seg" role="group" aria-label="Период">
+            <button v-for="y in yearOptions" :key="y.key" type="button"
+                    :aria-pressed="isYearActive(y.key)" @click="setYear(y.key)">{{ y.label }}</button>
+          </div>
+        </div>
+        <div class="filter">
+          <span class="filter__label">Адрес</span>
+          <div class="seg" role="group" aria-label="Адрес доставки">
+            <button v-for="a in ADDRESSES" :key="a.key" type="button"
+                    :aria-pressed="addr === a.key" @click="addr = a.key">{{ a.label }}</button>
+          </div>
+        </div>
+        <div class="filter" v-if="category">
+          <span class="filter__label">Категория</span>
+          <button type="button" class="chip chip--active" @click="category = null">{{ category }}</button>
+        </div>
+      </section>
+
+      <!-- KPI -->
+      <section class="kpis" aria-label="Ключевые метрики">
+        <div v-for="k in kpis" :key="k.label" class="kpi" :class="{ 'kpi--hero': k.hero }">
+          <div class="kpi__label">{{ k.label }}</div>
+          <div class="kpi__value">{{ k.value }}</div>
+          <div class="kpi__note">{{ k.note }}</div>
+        </div>
+      </section>
+
+      <!-- Помесячная динамика -->
+      <section class="card">
+        <div class="card__head">
+          <div>
+            <h2>Динамика по месяцам</h2>
+            <p class="hint">Наведите на месяц, чтобы увидеть значения. Выделите мышью диапазон — дашборд пересчитается за этот период; клик по графику сбрасывает выбор.</p>
+          </div>
+        </div>
+        <monthly-chart :series="monthly" v-model:range="range"></monthly-chart>
+      </section>
+
+      <!-- Категории + scatter -->
+      <section class="grid-2">
+        <div class="card">
+          <div class="card__head">
+            <div>
+              <h2>Категории</h2>
+              <p class="hint">Цветом выделены топ-5. Клик по категории фильтрует товары ниже</p>
+            </div>
+            <div class="seg seg--small" role="group" aria-label="Метрика категорий">
+              <button v-for="mtr in CAT_METRICS" :key="mtr.key" type="button" :title="mtr.title"
+                      :aria-pressed="catMetric === mtr.key" @click="catMetric = mtr.key">{{ mtr.label }}</button>
+            </div>
+          </div>
+          <category-chart :data="categories" :metric="catMetric" :selected="category"
+                          @select="selectCategory"></category-chart>
+          <p class="footnote">{{ servicesNote }}</p>
+        </div>
+
+        <div class="card">
+          <div class="card__head">
+            <div>
+              <h2>Частота против трат</h2>
+              <p class="hint">Каждая точка — товар. Правее — заказывается чаще, выше — больше денег. Картинками отмечены лидеры.</p>
+            </div>
+          </div>
+          <scatter-chart :items="items" :selected="category" :images="images"></scatter-chart>
+        </div>
+      </section>
+
+      <!-- Топы товаров -->
+      <section class="grid-2">
+        <div class="card">
+          <div class="card__head">
+            <div>
+              <h2>Чаще всего заказывает</h2>
+              <p class="hint">Число заказов, в которых был товар<span v-if="category"> · {{ category }}</span></p>
+            </div>
+          </div>
+          <top-list :items="topFreq" :images="images"
+                    :value="fmt.orders" :main="fmt.ordersMain" :extra="fmt.qtyExtra"></top-list>
+        </div>
+        <div class="card">
+          <div class="card__head">
+            <div>
+              <h2>Больше всего тратит</h2>
+              <p class="hint">Сумма покупок товара с учётом скидок<span v-if="category"> · {{ category }}</span></p>
+            </div>
+          </div>
+          <top-list :items="topSpend" :images="images"
+                    :value="fmt.spend" :main="fmt.spendMain" :extra="fmt.ordersExtra"></top-list>
+        </div>
+      </section>
+
+      <!-- Витрина категорий -->
+      <section class="card">
+        <div class="card__head">
+          <div>
+            <h2>Любимые товары в каждой категории</h2>
+            <p class="hint">Три самых частых товара категории и доля категории в тратах. Клик по карточке — выбрать категорию.</p>
+          </div>
+        </div>
+        <div class="showcase">
+          <button v-for="s in shelves" :key="s.cat" type="button" class="shelf"
+                  :class="{ 'is-active': s.cat === category }" :aria-pressed="s.cat === category"
+                  @click="selectCategory(s.cat)">
+            <div class="shelf__head">
+              <span class="shelf__name">{{ s.cat }}</span>
+              <span class="shelf__share">{{ fPct(s.share) }}</span>
+            </div>
+            <div class="shelf__meter"><span :style="{ width: s.meter + '%', background: s.color }"></span></div>
+            <div class="shelf__items">
+              <div v-for="it in s.top" :key="it.item" class="shelf__item"
+                   @pointermove="tip(it, $event)" @pointerleave="hideTip">
+                <img :src="images.get(it.item)" :alt="it.item">
+                <span class="shelf__badge">×{{ it.orders }}</span>
+              </div>
+            </div>
+            <div class="shelf__meta">{{ fRub(s.spend) }} · {{ pGoods(s.count) }}</div>
+          </button>
+        </div>
+      </section>
+    </template>
+
+    <footer class="foot">
+      Данные: история заказов клиента, 09.2021 – 08.2026. Учтены только доставленные заказы; отменённые показаны отдельно.
+      Средняя скидка = сумма скидок / стоимость товаров без скидки. Доставка и упаковка входят в траты, но не в анализ товаров.
+      Сделано на d3.js и Vue.js.
+    </footer>
+  </div>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+</body>
+</html>
